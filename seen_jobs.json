@@ -1,0 +1,22 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-09-28T12:00:00Z",
+  "seen_jobs": {
+    "linkedin_123456789": {
+      "platform": "linkedin",
+      "original_id": "123456789",
+      "title": "Backend Developer Python",
+      "company": "Tech Corp",
+      "first_seen_at": "2026-09-28T09:30:00Z",
+      "url": "https://linkedin.com/jobs/view/123456789"
+    },
+    "infojobs_987654321": {
+      "platform": "infojobs",
+      "original_id": "987654321",
+      "title": "Frontend React Engineer",
+      "company": "StartupX",
+      "first_seen_at": "2026-09-27T15:45:00Z",
+      "url": "https://infojobs.net/job/987654321"
+    }
+  }
+}
