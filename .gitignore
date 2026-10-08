@@ -1,41 +1,7 @@
-# Entorno virtual
 venv/
-.venv/
-env/
-
-# Python
 __pycache__/
-*.py[cod]
-*.egg-info/
-build/
-dist/
-
-# Secretos y configuración local (NUNCA subir)
+*.pyc
 .env
-.env.*
-!.env.example
-
-# Estado local del bot
-# Decisión pendiente con Breixo (Sesión 7-8): si la persistencia en CI
-# se hace con git auto-commit, hay que quitar esta línea.
 seen_jobs.json
 *.db
-*.sqlite3
-
-# Tests y cobertura
 .pytest_cache/
-.coverage
-htmlcov/
-
-# Linters / formateadores
-.mypy_cache/
-.ruff_cache/
-
-# Logs
-*.log
-
-# IDEs y sistema operativo
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db

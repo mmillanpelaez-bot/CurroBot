@@ -1,29 +1,32 @@
-import os
+"""Orquestador del Bot de Alertas de Empleo (CurroBot)."""
+
 import logging
+import os
 import sys
-from typing import TypedDict, List
+from typing import Dict, List, Tuple
 
-# Contrato de datos estricto para todo el equipo
-class JobOffer(TypedDict):
-    id: str           # Hash MD5 único
-    title: str        # Título de la oferta
-    company: str      # Nombre de la empresa ('Desconocida' si falta)
-    location: str     # Ubicación o modalidad ('Remoto', 'Madrid', etc.)
-    url: str          # Enlace canónico directo
-    source: str       # Plataforma de origen ('Tecnoempleo', 'RemoteOK', etc.)
-    published_at: str # Fecha en formato ISO 8601 (YYYY-MM-DD HH:MM)
+from fetcher.rss_fetcher import fetch_rss_feed
+from models import JobOffer
 
-# Configuración global de Logging profesional para CLI
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
 logger = logging.getLogger("JobAlertBot")
+
+# Provisional: en la Sesión 7 Martín lo parametrizará vía variables de entorno.
+FEEDS: List[Tuple[str, str]] = [
+    ("https://remoteok.com/remote-jobs.rss", "RemoteOK"),
+]
+
+
+def configure_logging() -> None:
+    """Única configuración de logging del proyecto; los módulos solo usan getLogger."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
 
 
 def check_environment() -> None:
-    """Valida la presencia de secretos o variables necesarias sin exponer sus valores."""
+    """Valida la presencia de secretos sin exponer sus valores."""
     telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
     discord_webhook = os.getenv("DISCORD_WEBHOOK_URL")
 
@@ -37,20 +40,39 @@ def check_environment() -> None:
         logger.info("Variables de entorno cargadas correctamente.")
 
 
+def fetch_all(feeds: List[Tuple[str, str]]) -> List[JobOffer]:
+    """Descarga todos los feeds; el fallo de uno no interrumpe a los demás."""
+    offers: List[JobOffer] = []
+    for url, source in feeds:
+        try:
+            offers.extend(fetch_rss_feed(url, source))
+        except Exception:
+            logger.exception("Fallo al obtener el feed de %s; se continúa.", source)
+    return offers
+
+
+def deduplicate(offers: List[JobOffer]) -> List[JobOffer]:
+    """Elimina duplicados dentro de la misma ejecución conservando el orden."""
+    unique: Dict[str, JobOffer] = {}
+    for offer in offers:
+        unique.setdefault(offer["id"], offer)
+    return list(unique.values())
+
+
 def run_pipeline() -> List[JobOffer]:
-    """
-    Punto de entrada orquestador.
-    Coordinará las llamadas secuenciales a los módulos de Martín, Sergio, Breixo y René.
-    """
+    """Coordina las etapas: fetch -> filtro -> persistencia -> notificación."""
     logger.info("Iniciando pipeline del Bot de Alertas de Empleo...")
     check_environment()
 
-    # Stub inicial mientras se integran los módulos del resto del equipo
-    processed_jobs: List[JobOffer] = []
+    jobs = deduplicate(fetch_all(FEEDS))
+    # TODO S4: jobs = FilterEngine(...).apply(jobs)          (Sergio)
+    # TODO S4: jobs = PersistenceEngine(...).only_new(jobs)  (Breixo)
+    # TODO S5: Notifier(...).send(jobs)                      (René)
 
-    logger.info("Pipeline finalizado con éxito. Ofertas procesadas: %d", len(processed_jobs))
-    return processed_jobs
+    logger.info("Pipeline finalizado. Ofertas procesadas: %d", len(jobs))
+    return jobs
 
 
 if __name__ == "__main__":
+    configure_logging()
     run_pipeline()

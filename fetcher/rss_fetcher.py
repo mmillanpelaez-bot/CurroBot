@@ -1,52 +1,36 @@
-# fetcher/rss_fetcher.py
+"""Ingesta de feeds RSS y transformación al contrato JobOffer."""
 
 import hashlib
 import logging
-from typing import List, TypedDict
+from typing import List
+
 import feedparser
 
-# 1. Configuración de Logging: Para registrar la actividad en la consola
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s"
-)
+from models import JobOffer
+
 logger = logging.getLogger("DataFetcher")
 
 
-# 2. Contrato de Datos: La estructura exacta que exige el equipo
-class JobOffer(TypedDict):
-    id: str           # Hash MD5 único derivado de la URL
-    title: str        # Título de la oferta
-    company: str      # Nombre de la empresa ('Desconocida' si no existe)
-    location: str     # Ubicación o modalidad
-    url: str          # Enlace directo
-    source: str       # Fuente de donde se obtiene (ej: 'RemoteOK')
-    published_at: str # Fecha formateada
-
-
-# 3. Generador de ID Único: Evita procesar ofertas duplicadas
 def generate_job_id(url: str) -> str:
     """Genera un hash MD5 de 32 caracteres a partir de la URL."""
     return hashlib.md5(url.encode("utf-8")).hexdigest()
 
 
-# 4. Función de Descarga y Transformación: Descarga el RSS y mapea al contrato
 def fetch_rss_feed(feed_url: str, source_name: str) -> List[JobOffer]:
     """Obtiene un feed RSS y devuelve las ofertas siguiendo el contrato JobOffer."""
-    logger.info(f"Iniciando descarga de RSS desde: {feed_url}")
+    logger.info("Iniciando descarga de RSS desde: %s", feed_url)
     parsed_feed = feedparser.parse(feed_url)
 
     if parsed_feed.bozo:
-        logger.warning(f"Posible problema de formato en el RSS de {source_name}.")
+        logger.warning("Posible problema de formato en el RSS de %s.", source_name)
 
     job_offers: List[JobOffer] = []
 
     for entry in parsed_feed.entries:
         link = getattr(entry, "link", "")
         if not link:
-            continue  # Si no hay URL, ignoramos la entrada por falta de ID
+            continue  # Sin URL no hay ID posible
 
-        # Parseo defensivo con valores por defecto
         title = getattr(entry, "title", "Sin título")
         company = getattr(entry, "company", "Desconocida")
         location = getattr(entry, "location", "No especificada")
@@ -63,5 +47,5 @@ def fetch_rss_feed(feed_url: str, source_name: str) -> List[JobOffer]:
         }
         job_offers.append(offer)
 
-    logger.info(f"Se procesaron exitosamente {len(job_offers)} ofertas de {source_name}.")
+    logger.info("Se procesaron %d ofertas de %s.", len(job_offers), source_name)
     return job_offers
