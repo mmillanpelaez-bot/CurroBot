@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional
+from typing import Any, Dict
 
 
 class PersistenceEngine:
@@ -20,7 +20,7 @@ class PersistenceEngine:
             initial_data = {
                 "version": "1.0",
                 "last_updated": self.fecha_hora_actual(),
-                "seen_jobs": {}
+                "seen_jobs": {},
             }
             self.cargar_datos(initial_data)
 
@@ -56,12 +56,15 @@ class PersistenceEngine:
     def añadir_oferta(self, job_id: str, job_info: Dict[str, Any]) -> None:
         """Agrega o actualiza un empleo en el registro."""
         data = self.cargar_datos()
-        job_entry = {**job_info, "first_seen_at": job_info.get("first_seen_at", self.fecha_hora_actual())}
+        job_entry = {
+            **job_info,
+            "first_seen_at": job_info.get("first_seen_at", self.fecha_hora_actual()),
+        }
         data["seen_jobs"][job_id] = job_entry
         self.guardar_datos(data)
 
     def eliminar_antiguos(self, days: int = 30) -> int:
-        """Elimina empleos cuya antigüedad supere los días indicados. Retorna la cantidad eliminada."""
+        """Elimina empleos más antiguos que `days`. Retorna la cantidad eliminada."""
         data = self.cargar_datos()
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         seen_jobs = data.get("seen_jobs", {})

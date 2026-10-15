@@ -1,5 +1,2 @@
 feedparser
-pytest
-pytest-mock
-flake8
-black
+python-dotenv
