@@ -1,52 +1,66 @@
-import unittest
-from unittest.mock import MagicMock, patch
-import requests
+import sys
+from pathlib import Path
 
-from fetcher.rss_fetcher import (
-    fetch_all_sources,
-    fetch_rss_feed,
-    generate_job_id,
-)
+# Ajuste del PYTHONPATH:
+# Subimos 2 niveles desde 'tests/test_rss_fetcher.py' para llegar a la raíz 'CurroBot'
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-
-class TestRssFetcher(unittest.TestCase):
-
-    def test_generate_job_id_deterministic(self):
-        url = "https://remoteok.com/remote-jobs/12345"
-        self.assertEqual(generate_job_id(url), generate_job_id(url))
-        self.assertEqual(len(generate_job_id(url)), 32)
-
-    @patch("requests.get")
-    @patch("feedparser.parse")
-    def test_fetch_rss_feed_success(self, mock_feedparser, mock_requests_get):
-        mock_response = MagicMock()
-        mock_response.content = b"<xml></xml>"
-        mock_requests_get.return_value = mock_response
-
-        mock_entry = MagicMock()
-        mock_entry.link = "https://tecnoempleo.com/oferta/100"
-        mock_entry.title = " Desarrollador Python "
-        mock_entry.author = " TechCorp "
-        mock_entry.location = " Remoto "
-        mock_entry.published = "2026-10-05 10:00"
-
-        mock_feed = MagicMock()
-        mock_feed.bozo = 0
-        mock_feed.entries = [mock_entry]
-        mock_feedparser.return_value = mock_feed
-
-        results = fetch_rss_feed("https://fake-url.com/rss", "TestProvider")
-
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["title"], "Desarrollador Python")
-        self.assertEqual(results[0]["company"], "TechCorp")
-
-    @patch("requests.get")
-    def test_fetch_rss_feed_timeout_resilience(self, mock_requests_get):
-        mock_requests_get.side_effect = requests.Timeout("Timeout de red")
-        results = fetch_rss_feed("https://fake-url.com/rss", "TestProvider")
-        self.assertEqual(results, [])
+import pytest
+from src.fetcher.rss_fetcher import generate_job_id, fetch_tecnoempleo_rss
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_generate_job_id_consistency():
+    """Valida que la generación de ID con MD5 sea consistente e idempotente."""
+    url = "https://www.tecnoempleo.com/oferta-12345"
+    id_1 = generate_job_id(url)
+    id_2 = generate_job_id(url)
+
+    assert id_1 == id_2
+    assert len(id_1) == 32  # Un hash MD5 tiene exactamente 32 caracteres hexadecimales
+
+
+def test_fetch_tecnoempleo_rss_contract(mocker):
+    """
+    Simula la respuesta del feed RSS y valida que el objeto resultante
+    cumpla con la estructura y claves del contrato JobOffer.
+    """
+    # 1. Crear el objeto simulado (Mock) del feed
+    mock_feed = mocker.Mock()
+    mock_entry = mocker.Mock()
+
+    mock_entry.link = "https://www.tecnoempleo.com/python-dev-madrid"
+    mock_entry.title = "Desarrollador Python Junior"
+    mock_entry.author = "Tech Company"
+    mock_entry.published = "2026-10-15 10:00"
+    mock_entry.tags = [{"term": "Remoto"}]
+
+    mock_feed.entries = [mock_entry]
+    mock_feed.bozo = False
+
+    # 2. Interceptar la llamada a feedparser.parse
+    mocker.patch("feedparser.parse", return_value=mock_feed)
+
+    # 3. Ejecutar la función a probar
+    result = fetch_tecnoempleo_rss("http://fake-feed-url.com")
+
+    # 4. Validaciones
+    assert len(result) == 1
+    offer = result[0]
+
+    # Verificación del Data Contract (JobOffer)
+    assert offer["id"] == generate_job_id("https://www.tecnoempleo.com/python-dev-madrid")
+    assert offer["title"] == "Desarrollador Python Junior"
+    assert offer["company"] == "Tech Company"
+    assert offer["location"] == "Remoto"
+    assert offer["url"] == "https://www.tecnoempleo.com/python-dev-madrid"
+    assert offer["source"] == "Tecnoempleo"
+    assert offer["published_at"] == "2026-10-15 10:00"
+
+
+def test_fetch_tecnoempleo_rss_empty_on_error(mocker):
+    """Verifica el comportamiento defensivo: si la red o el feed falla, debe devolver lista vacía."""
+    mocker.patch("feedparser.parse", side_effect=Exception("Error de conexión simualdo"))
+
+    result = fetch_tecnoempleo_rss("http://fake-feed-url.com")
+
+    assert result == []
