@@ -1,89 +1,72 @@
 import hashlib
 import logging
-import os
-import sys
-from pathlib import Path
-from typing import List, Optional
-import feedparser
-
-# Garantizar el path del proyecto
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
+from datetime import datetime
+from typing import List
 
 from src.models import JobOffer
 
-logger = logging.getLogger("JobBotPipeline.Fetcher")
-
-DEFAULT_FEEDS = [
-    "https://www.tecnoempleo.com/rss/",
-    "https://remoteok.com/rss"
-]
+logger = logging.getLogger(__name__)
 
 
-def get_configured_feeds() -> List[str]:
-    """Obtiene la lista de feeds desde variable de entorno o usa los por defecto."""
-    env_feeds = os.getenv("JOB_FEEDS_URLS")
-    if env_feeds:
-        return [url.strip() for url in env_feeds.split(",") if url.strip()]
-    return DEFAULT_FEEDS
+def generate_job_id(canonical_url: str) -> str:
+    """Genera un hash MD5 único a partir de la URL canónica de la oferta."""
+    return hashlib.md5(canonical_url.strip().encode("utf-8")).hexdigest()
 
 
-def generate_job_id(url: str) -> str:
-    """Genera un hash MD5 único a partir de la URL canónica."""
-    return hashlib.md5(url.encode("utf-8")).hexdigest()
-
-
-def fetch_single_feed(feed_url: str) -> List[JobOffer]:
-    """Extrae ofertas de un feed RSS de forma defensiva."""
-    logger.info(f"Martín: Conectando a {feed_url}...")
+def fetch_rss_jobs(
+    feed_url: str, source_name: str = "RSS Feed"
+) -> List[JobOffer]:
+    """
+    Obtiene y parsea un feed RSS público convirtiendo las entradas al contrato JobOffer.
+    Maneja timeouts, errores HTTP y XMLs corruptos.
+    """
+    offers: List[JobOffer] = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) BotEmpleo/1.0"
+    }
+    req = urllib.request.Request(feed_url, headers=headers)
 
     try:
-        feed = feedparser.parse(feed_url)
-
-        if getattr(feed, "bozo", False):
-            logger.warning(f"Martín: Formato XML irregular en {feed_url}. Parseo parcial.")
-
-        offers: List[JobOffer] = []
-
-        for entry in getattr(feed, "entries", []):
-            raw_url = getattr(entry, "link", "")
-            if not raw_url:
-                continue
-
-            job_id = generate_job_id(raw_url)
-            title = getattr(entry, "title", "Sin título")
-            company = getattr(entry, "author", getattr(entry, "company", "Desconocida"))
-
-            location = "No especificada"
-            if hasattr(entry, "tags") and entry.tags:
-                location = entry.tags[0].get("term", "No especificada")
-
-            published_at = getattr(entry, "published", "Fecha no disponible")
-
-            offer: JobOffer = {
-                "id": job_id,
-                "title": title,
-                "company": company,
-                "location": location,
-                "url": raw_url,
-                "source": "RSS_Feed",
-                "published_at": published_at
-            }
-            offers.append(offer)
-
-        return offers
-
-    except Exception as e:
-        logger.error(f"Martín: Error al procesar {feed_url}: {e}")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            xml_data = response.read()
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
+        logger.error(f"Error de red/timeout en {source_name} ({feed_url}): {e}")
         return []
 
+    try:
+        root = ET.fromstring(xml_data)
+    except ET.ParseError as e:
+        logger.error(f"Error parseando el XML de {source_name}: {e}")
+        return []
 
-def fetch_all_jobs(feed_urls: Optional[List[str]] = None) -> List[JobOffer]:
-    """Orquestador de extracción multi-fuente."""
-    urls = feed_urls or get_configured_feeds()
-    all_offers: List[JobOffer] = []
+    for item in root.findall(".//item"):
+        link = item.findtext("link", default="").strip()
+        if not link:
+            continue
 
-    for url in urls:
-        offers = fetch_single_feed(url)
-        all_offers.extend(offers)
+        title = item.findtext("title", default="Sin Título").strip()
+        company = (
+            item.findtext("author")
+            or item.findtext("dc:creator")
+            or "Desconocida"
+        )
+        formatted_date = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    return all_offers
+        offer: JobOffer = {
+            "id": generate_job_id(link),
+            "title": title,
+            "company": company.strip(),
+            "location": "No especificada",
+            "url": link,
+            "source": source_name,
+            "published_at": formatted_date,
+        }
+        offers.append(offer)
+
+    logger.info(
+        f"Se extrajeron {len(offers)} ofertas de la fuente: {source_name}"
+    )
+    return offers
