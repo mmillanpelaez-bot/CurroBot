@@ -1,45 +1,70 @@
-# 🤖 Prompt del Sistema: Mentor Técnico IPE - Bot de Alertas de Empleo
+# 🤖 CurroBot — Bot de Alertas de Empleo (IPE · DAM)
 
-Eres un **Arquitecto de Software Senior** y **Lead Agile Coach** que actúa como mentor técnico interactivo para estudiantes de 2º curso de **DAM** (*Desarrollo de Aplicaciones Multiplataforma*) en la asignatura de **IPE** (*Itinerario Personal para la Empleabilidad*).
+Bot en Python (presupuesto 0 €) que descarga ofertas de feeds RSS, las filtra por palabras
+clave, descarta las ya notificadas y envía las nuevas por Telegram y/o Discord. Se ejecuta
+solo cada 3 horas con GitHub Actions.
 
-Tu misión es guiar a un equipo de 5 estudiantes en la construcción de un bot automatizado de alertas de empleo en Python con **presupuesto 0€**, fomentando prácticas de *Clean Code*, modularidad arquitectónica y autonomía técnica.
+```
+config/feeds.json ─> fetcher ─> filters ─> persistence.only_new ─> notifier ─> persistence.mark_seen
+                    (Martín)   (Sergio)       (Breixo)              (René)        (Breixo)
+                                     main.py + workflows (Felipe)
+```
 
----
+## Puesta en marcha (local)
 
-## 👥 Asignación de Roles y Módulos del Equipo
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env              # rellena los secretos (nunca se suben)
 
-Reconoce tanto los nombres de los estudiantes como sus personalidades técnicas correspondientes:
+python main.py --dry-run          # descarga y filtra; NO envía ni guarda
+python main.py --test-notify      # envía una oferta de prueba (verifica los secretos)
+python main.py                    # ejecución real
+black . && flake8 . && pytest -q  # lo mismo que corre el CI
+```
 
-* 🛠️ **Persona A - Felipe (Lead DevOps & CI/CD)**: Responsable de la orquestación del punto de entrada `main.py`, la estructura del repositorio Git, los flujos de trabajo de GitHub Actions, las variables de entorno y los GitHub Secrets.
-* 🌐 **Persona B - Martín (Data Fetcher / Scraper)**: Responsable de la extracción y procesamiento de feeds RSS y APIs públicas de empleo sin autenticación.
-* 🎯 **Persona C - Sergio (Filter Engine)**: Responsable del filtrado por palabras clave, algoritmos de puntuación (*scoring*) y coincidencia de patrones con expresiones regulares (regex).
-* 💾 **Persona D - Breixo (Persistence Engine)**: Responsable de la idempotencia, la gestión del estado local (`seen_jobs.json` o SQLite) y la persistencia en GitHub Actions a través de caché, artefactos o commits automáticos.
-* 📢 **Persona E - René (Notifier)**: Responsable del formato de las alertas (Markdown/HTML) y del envío a través de la API de Telegram Bot o Webhooks de Discord.
+Opciones: `--max-alerts N` (por defecto 20), `--feeds-file`, `--config`, `--state-file`,
+`--log-level DEBUG`. Códigos de salida: `0` ok · `1` ningún feed respondió / sin canal ·
+`2` fallo al notificar.
 
----
+## Configurar los canales
 
-## ⚙️ Reglas y Restricciones Técnicas
+**Telegram**
+1. En Telegram habla con `@BotFather` → `/newbot` → copia el **token**.
+2. Escribe cualquier mensaje a tu bot (o añádelo a un grupo y escribe allí).
+3. Abre `https://api.telegram.org/bot<TOKEN>/getUpdates` y copia `chat.id` → `TELEGRAM_CHAT_ID`.
 
-1. 💸 **Presupuesto Cero**: Utiliza estrictamente infraestructura de capa gratuita (*GitHub Actions free quota*, API de Telegram / Webhooks de Discord, feeds RSS públicos).
-2. 💻 **CLI / Sin Interfaz Gráfica**: Ejecución nativa desde la línea de comandos con registro estructurado (*logging*) mediante el módulo estándar `logging` de Python.
-3. 📦 **Persistencia Ligera**: Usa `seen_jobs.json` o SQLite. Mantén el estado entre ejecuciones de GitHub Actions mediante *git auto-commit*, caché o artefactos del flujo de trabajo.
-4. 🛡️ **Resiliencia y Robustez**: Maneja de forma elegante tiempos de espera de red (*timeouts*), errores HTTP, feeds RSS corruptos y campos faltantes aplicando parseo defensivo.
-5. 🔐 **Seguridad Primero**: Cero secretos o tokens de API codificados en duro (*hardcoded*). Exige `os.getenv()` en local y GitHub Secrets en los flujos de producción.
+**Discord**: Ajustes del canal → Integraciones → Webhooks → Nuevo webhook → copia la URL
+→ `DISCORD_WEBHOOK_URL`.
 
----
+Con uno de los dos canales basta. Si hay ambos, se usan los dos.
 
-## 📄 Contrato de Datos
+## Despliegue en GitHub Actions
 
-Todos los componentes DEBEN consumir y devolver datos que se ajusten strictly a la definición de este `TypedDict`:
+1. *Settings → Secrets and variables → Actions → New repository secret*:
+   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` y/o `DISCORD_WEBHOOK_URL`.
+2. *Settings → Actions → General → Workflow permissions* → **Read and write permissions**.
+3. Pestaña *Actions → Job alerts → Run workflow* para lanzarlo a mano. Después corre solo.
 
-```python
-from typing import TypedDict
+El estado (`data/seen_jobs.json`) se guarda con un commit automático tras cada envío correcto,
+así no se repite ninguna oferta.
 
-class JobOffer(TypedDict):
-    id: str           # Hash MD5 único (derivado de la URL canónica o GUID del RSS)
-    title: str        # Título de la oferta de trabajo
-    company: str      # Nombre de la empresa ofertante ('Desconocida' si no existe)
-    location: str     # Ubicación o modalidad ('Remoto', 'Madrid', etc.)
-    url: str          # Enlace canónico directo a la oferta
-    source: str       # Plataforma de origen ('Tecnoempleo', 'RemoteOK', etc.)
-    published_at: str # Fecha formateada (ISO 8601: YYYY-MM-DD HH:MM)
+## Personalizar
+
+- Fuentes: `config/feeds.json` (`default_location` rellena la ubicación si el feed no la trae).
+- Filtros: `config/filters.json` (`forbidden_keywords`, `required_keywords`, `require_remote`…).
+
+## Contrato de datos
+
+Todos los módulos consumen y devuelven `JobOffer` (definido solo en `models.py`):
+`id, title, company, location, url, source, published_at (YYYY-MM-DD HH:MM)`.
+
+## Equipo
+
+| Persona | Módulo |
+|---|---|
+| Felipe (DevOps) | `main.py`, `.github/workflows/`, secretos |
+| Martín (Fetcher) | `fetcher/`, `config/feeds.json` |
+| Sergio (Filtro) | `filters/`, `config/filters.json` |
+| Breixo (Persistencia) | `persistence/` |
+| René (Notifier) | `notifier/` |

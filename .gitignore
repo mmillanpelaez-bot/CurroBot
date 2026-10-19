@@ -3,9 +3,9 @@ venv/
 __pycache__/
 *.pyc
 .env
-seen_jobs.json
 *.db
 .pytest_cache/
 .coverage
 .idea/
 .vscode/
+# data/seen_jobs.json NO se ignora: el workflow lo versiona (git auto-commit).

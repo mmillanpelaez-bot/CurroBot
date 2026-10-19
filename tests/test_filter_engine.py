@@ -1,17 +1,22 @@
 """Tests del motor de filtrado."""
+
 import logging
 from typing import Dict, List
 
 import pytest
 
-from Filter.filter_engine import create_job_filter_from_config
-from Filter.Model import JobOffer
+from filters.filter_engine import create_job_filter_from_config
+from models import JobOffer
 
 
 def make_offer(title, location="Remoto", **kw) -> dict:
     base = {
-        "id": "x", "title": title, "company": "Desconocida", "location": location,
-        "url": "https://example.com/x", "source": "Test",
+        "id": "x",
+        "title": title,
+        "company": "Desconocida",
+        "location": location,
+        "url": "https://example.com/x",
+        "source": "Test",
         "published_at": "2026-10-05 10:00",
     }
     base.update(kw)
@@ -25,10 +30,21 @@ def run(cfg: dict, *offers) -> list:
 @pytest.fixture
 def sample_offers() -> List[JobOffer]:
     return [
-        make_offer("Desarrollador Python Junior", id="1", company="Company A",
-                   source="Tecnoempleo", published_at="2026-10-01 10:00"),
-        make_offer("Frontend React Developer", location="Madrid", id="2",
-                   company="Company B", source="RemoteOK", published_at="2026-10-01 11:00"),
+        make_offer(
+            "Desarrollador Python Junior",
+            id="1",
+            company="Company A",
+            source="Tecnoempleo",
+            published_at="2026-10-01 10:00",
+        ),
+        make_offer(
+            "Frontend React Developer",
+            location="Madrid",
+            id="2",
+            company="Company B",
+            source="RemoteOK",
+            published_at="2026-10-01 11:00",
+        ),
     ]
 
 
@@ -46,7 +62,9 @@ def test_default_base_config_mode(sample_offers, base_config):
 
 def test_runtime_override_mode(sample_offers, base_config):
     """Modo 2: criterios dinámicos en tiempo de ejecución."""
-    engine = create_job_filter_from_config(base_config, runtime_overrides={"required_keywords": ["react"]})
+    engine = create_job_filter_from_config(
+        base_config, runtime_overrides={"required_keywords": ["react"]}
+    )
     assert [o["id"] for o in engine.filter_offers(sample_offers)] == ["2"]
 
 
@@ -58,16 +76,23 @@ def test_runtime_override_replaces_not_merges():
 
 
 # --- Ofertas ambiguas ---
-@pytest.mark.parametrize("keyword, title, expected", [
-    ("java", "JavaScript Developer", 0),
-    ("c++", "Programador C++", 1),
-    ("c#", "Desarrollador C# .NET", 1),
-    ("c++", "Programador C", 0),
-    (".net", "Backend .NET", 1),
-    ("programacion", "Técnico de Programación", 1),
-])
+@pytest.mark.parametrize(
+    "keyword, title, expected",
+    [
+        ("java", "JavaScript Developer", 0),
+        ("c++", "Programador C++", 1),
+        ("c#", "Desarrollador C# .NET", 1),
+        ("c++", "Programador C", 0),
+        (".net", "Backend .NET", 1),
+        ("programacion", "Técnico de Programación", 1),
+    ],
+)
 def test_ambiguous_keywords(keyword, title, expected):
     assert len(run({"required_keywords": [keyword]}, make_offer(title))) == expected
+
+
+def test_dotted_keyword_matches_inside_compound():
+    assert len(run({"required_keywords": [".net"]}, make_offer("Backend ASP.NET"))) == 1
 
 
 def test_senior_not_matched_inside_other_word():
@@ -142,6 +167,11 @@ def test_none_fields_do_not_crash():
 
 def test_none_title_is_not_text_none():
     assert run({"required_keywords": ["none"]}, make_offer(None)) == []
+
+
+def test_null_lists_in_config_fall_back_to_defaults():
+    engine = create_job_filter_from_config({"required_keywords": None, "forbidden_keywords": None})
+    assert len(engine.filter_offers([make_offer("Python Dev")])) == 1
 
 
 def test_missing_config_file_uses_defaults(caplog):

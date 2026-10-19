@@ -1,0 +1,14 @@
+{
+  "feeds": [
+    {
+      "url": "https://remoteok.com/remote-jobs.rss",
+      "source": "RemoteOK",
+      "default_location": "Remoto"
+    },
+    {
+      "url": "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+      "source": "WeWorkRemotely",
+      "default_location": "Remoto"
+    }
+  ]
+}

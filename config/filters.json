@@ -1,0 +1,10 @@
+{
+  "forbidden_keywords": ["senior", "sr", "lead", "head of", "principal", "staff", "manager"],
+  "required_keywords": [
+    "python", "java", "javascript", "typescript", "react", "node.js",
+    "c#", ".net", "sql", "android", "kotlin", "flutter"
+  ],
+  "match_all_keywords": false,
+  "require_remote": false,
+  "allowed_locations": []
+}

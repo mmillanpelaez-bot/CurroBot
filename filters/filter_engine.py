@@ -1,13 +1,15 @@
 """Motor de filtrado de ofertas de empleo basado en reglas (Patrón Estrategia)."""
+
 import abc
 import json
 import logging
+import os
 import re
 import unicodedata
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
-from Filter.Model import JobOffer
+from models import JobOffer
 
 logger = logging.getLogger(__name__)
 
@@ -35,21 +37,22 @@ def normalize_text(text: Optional[str]) -> str:
 
 
 def offer_text(offer: JobOffer) -> str:
-    """Devuelve 'título ubicación' normalizado (None-safe, cacheado por normalize_text)."""
+    """Devuelve 'título ubicación' normalizado (None-safe)."""
     title = offer.get("title") or ""
     location = offer.get("location") or ""
     return normalize_text(f"{title} {location}")
 
 
 def build_tech_pattern(keyword: str) -> re.Pattern:
-    """Construye una regex precompilada con soporte para símbolos técnicos (c++, c#, .net)."""
+    """Regex precompilada con soporte para símbolos técnicos (c++, c#, .net).
+
+    Solo se exige frontera de palabra en los extremos alfanuméricos, de modo que
+    'java' no case con 'javascript' pero '.net' sí case con 'asp.net'.
+    """
     norm_kw = normalize_text(keyword)
-    escaped_kw = re.escape(norm_kw)
-
-    start_b = r"\b" if norm_kw and norm_kw[0].isalnum() else r"(?:^|\s|[^\w])"
-    end_b = r"\b" if norm_kw and norm_kw[-1].isalnum() else r"(?:$|\s|[^\w])"
-
-    return re.compile(f"{start_b}{escaped_kw}{end_b}", re.IGNORECASE)
+    start = r"(?<!\w)" if norm_kw and norm_kw[0].isalnum() else ""
+    end = r"(?!\w)" if norm_kw and norm_kw[-1].isalnum() else ""
+    return re.compile(f"{start}{re.escape(norm_kw)}{end}", re.IGNORECASE)
 
 
 class BaseFilterRule(abc.ABC):
@@ -64,13 +67,9 @@ class BlacklistRule(BaseFilterRule):
     """Descarta ofertas que contengan alguna palabra prohibida."""
 
     def __init__(self, forbidden_keywords: List[str]) -> None:
-        """Precompila un patrón por cada palabra prohibida."""
-        self.forbidden_patterns = [
-            (kw, build_tech_pattern(kw)) for kw in forbidden_keywords if kw
-        ]
+        self.forbidden_patterns = [(kw, build_tech_pattern(kw)) for kw in forbidden_keywords if kw]
 
     def evaluate(self, offer: JobOffer) -> Tuple[bool, int, str]:
-        """Rechaza la oferta si título o ubicación contienen una palabra prohibida."""
         target_text = offer_text(offer)
         for raw_kw, pattern in self.forbidden_patterns:
             if pattern.search(target_text):
@@ -91,7 +90,6 @@ class KeywordMatchRule(BaseFilterRule):
         synonyms: Optional[Dict[str, List[str]]] = None,
         match_all: bool = False,
     ) -> None:
-        """Precompila patrones por keyword, incluyendo sus sinónimos normalizados."""
         self.match_all = match_all
         self.synonyms = {normalize_text(k): v for k, v in (synonyms or {}).items()}
         self.compiled_rules: List[Tuple[str, List[re.Pattern]]] = []
@@ -100,17 +98,16 @@ class KeywordMatchRule(BaseFilterRule):
             if not kw:
                 continue
             terms = [kw] + self.synonyms.get(normalize_text(kw), [])
-            patterns = [build_tech_pattern(term) for term in terms]
-            self.compiled_rules.append((kw, patterns))
+            self.compiled_rules.append((kw, [build_tech_pattern(t) for t in terms]))
 
     def evaluate(self, offer: JobOffer) -> Tuple[bool, int, str]:
-        """Calcula la puntuación y aplica el modo OR/AND."""
         if not self.compiled_rules:
             return True, 0, ""
 
         target_text = offer_text(offer)
         matched = [
-            kw for kw, patterns in self.compiled_rules
+            kw
+            for kw, patterns in self.compiled_rules
             if any(p.search(target_text) for p in patterns)
         ]
 
@@ -132,17 +129,12 @@ class RemoteOrLocationRule(BaseFilterRule):
         require_remote: bool = False,
         allowed_locations: Optional[List[str]] = None,
     ) -> None:
-        """Normaliza las ubicaciones permitidas."""
         self.require_remote = require_remote
-        self.allowed_locations = [
-            normalize_text(loc) for loc in (allowed_locations or []) if loc
-        ]
+        self.allowed_locations = [normalize_text(loc) for loc in (allowed_locations or []) if loc]
 
     def evaluate(self, offer: JobOffer) -> Tuple[bool, int, str]:
-        """Aplica las restricciones de remoto/ubicación y otorga un pequeño bonus al remoto."""
         loc_text = normalize_text(offer.get("location") or "")
-        full_text = offer_text(offer)
-        is_remote = bool(REMOTE_PATTERN.search(full_text))
+        is_remote = bool(REMOTE_PATTERN.search(offer_text(offer)))
 
         if self.require_remote and not is_remote:
             return False, 0, "Requiere modalidad remota"
@@ -158,7 +150,6 @@ class JobFilterEngine:
     """Aplica una lista de reglas a las ofertas y las ordena por puntuación."""
 
     def __init__(self, rules: Optional[List[BaseFilterRule]] = None) -> None:
-        """Guarda las reglas a aplicar, en orden."""
         self.rules: List[BaseFilterRule] = rules or []
 
     def is_relevant(self, offer: JobOffer) -> Tuple[bool, int, str]:
@@ -172,7 +163,7 @@ class JobFilterEngine:
         return True, total_score, ""
 
     def filter_offers(self, offers: List[JobOffer]) -> List[JobOffer]:
-        """Filtra y ordena (mayor puntuación primero), registrando los descartes."""
+        """Filtra y ordena (mayor puntuación primero; estable), registrando descartes."""
         evaluated: List[Tuple[JobOffer, int]] = []
         for offer in offers:
             if not isinstance(offer, dict):
@@ -191,6 +182,14 @@ class JobFilterEngine:
         return [item[0] for item in evaluated]
 
 
+def _as_list(cfg: Dict[str, Any], key: str, default: List[str]) -> List[str]:
+    """Lee una lista de la config; None/ausente -> default; un str suelto -> [str]."""
+    value = cfg.get(key)
+    if value is None:
+        return default
+    return [value] if isinstance(value, str) else list(value)
+
+
 def create_job_filter_from_config(
     config_source: Optional[Any] = None,
     runtime_overrides: Optional[Dict[str, Any]] = None,
@@ -203,14 +202,14 @@ def create_job_filter_from_config(
     """
     cfg: Dict[str, Any] = {}
 
-    if isinstance(config_source, str):
+    if isinstance(config_source, (str, os.PathLike)):
         try:
             with open(config_source, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
             if isinstance(loaded, dict):
                 cfg = loaded
             else:
-                logger.error("La configuración %s no es un objeto JSON. Usando defaults.", config_source)
+                logger.error("%s no es un objeto JSON. Usando defaults.", config_source)
         except (OSError, json.JSONDecodeError) as err:
             logger.error("No se pudo cargar la configuración base (%s). Usando defaults.", err)
     elif isinstance(config_source, dict):
@@ -219,17 +218,17 @@ def create_job_filter_from_config(
     if runtime_overrides:
         cfg.update(runtime_overrides)
 
+    synonyms = cfg.get("synonyms")
     rules: List[BaseFilterRule] = [
-        BlacklistRule(cfg.get("forbidden_keywords", DEFAULT_FORBIDDEN)),
+        BlacklistRule(_as_list(cfg, "forbidden_keywords", DEFAULT_FORBIDDEN)),
         KeywordMatchRule(
-            required_keywords=cfg.get("required_keywords", DEFAULT_REQUIRED),
-            synonyms=cfg.get("synonyms", DEFAULT_SYNONYMS),
-            match_all=cfg.get("match_all_keywords", False),
+            required_keywords=_as_list(cfg, "required_keywords", DEFAULT_REQUIRED),
+            synonyms=DEFAULT_SYNONYMS if synonyms is None else synonyms,
+            match_all=bool(cfg.get("match_all_keywords", False)),
         ),
         RemoteOrLocationRule(
-            require_remote=cfg.get("require_remote", False),
-            allowed_locations=cfg.get("allowed_locations", []),
+            require_remote=bool(cfg.get("require_remote", False)),
+            allowed_locations=_as_list(cfg, "allowed_locations", []),
         ),
     ]
-
     return JobFilterEngine(rules=rules)
